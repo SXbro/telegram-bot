@@ -1,6 +1,5 @@
 import logging
 import os
-import time
 import hashlib
 from typing import Dict
 
@@ -12,7 +11,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
 
-from db import DatabaseHandler
+from db import DatabaseHandler  # Make sure you have db.py with DatabaseHandler implemented
 
 # Load environment variables
 load_dotenv()
@@ -37,11 +36,11 @@ class AnonymousMessageBot:
         self.pending_messages: Dict[int, int] = {}
 
     def generate_stable_user_link(self, user_id: int) -> str:
-        """Generate stable invite link (same per user)"""
+        """Generate stable invite link (same per user)."""
         user_hash = hashlib.md5(str(user_id).encode()).hexdigest()[:10]
         return f"https://t.me/{self.bot_username}?start={user_id}_{user_hash}"
 
-    def extract_user_id_from_start(self, start_param: str) -> int:
+    def extract_user_id_from_start(self, start_param: str) -> int | None:
         try:
             return int(start_param.split('_')[0])
         except (ValueError, IndexError):
@@ -175,8 +174,8 @@ class AnonymousMessageBot:
                 else:
                     await update.message.reply_text("❌ Failed to save your message.")
 
-                del self.user_states[user_id]
-                del self.pending_messages[user_id]
+                self.user_states.pop(user_id, None)
+                self.pending_messages.pop(user_id, None)
             else:
                 await update.message.reply_text("❌ Something went wrong. Try using the link again.")
         else:
@@ -217,6 +216,7 @@ class AnonymousMessageBot:
         logger.info("🚀 Bot started and running...")
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
+
 def main():
     if not BOT_TOKEN or not BOT_USERNAME:
         print("❌ BOT_TOKEN or BOT_USERNAME not set in environment.")
@@ -224,6 +224,7 @@ def main():
 
     bot = AnonymousMessageBot(BOT_TOKEN, BOT_USERNAME)
     bot.run()
+
 
 if __name__ == "__main__":
     main()
