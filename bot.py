@@ -35,12 +35,12 @@ class AnonymousMessageBot:
         self.db = DatabaseHandler()
         self.user_states: Dict[int, str] = {}
         self.pending_messages: Dict[int, int] = {}
-    
+
     def generate_stable_user_link(self, user_id: int) -> str:
         """Generate stable invite link (same per user)"""
         user_hash = hashlib.md5(str(user_id).encode()).hexdigest()[:10]
         return f"https://t.me/{self.bot_username}?start={user_id}_{user_hash}"
-    
+
     def extract_user_id_from_start(self, start_param: str) -> int:
         try:
             return int(start_param.split('_')[0])
@@ -100,13 +100,13 @@ class AnonymousMessageBot:
         )
 
         await update.message.reply_text(welcome_message, parse_mode=ParseMode.MARKDOWN)
-    
+
     async def newlink_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if user_id != OWNER_ID:
             await update.message.reply_text("❌ You are not authorized to use this command.")
             return
-        
+
         new_link = self.generate_stable_user_link(user_id)
         await update.message.reply_text(
             f"🔗 Your new anonymous message link:\n"
@@ -119,7 +119,7 @@ class AnonymousMessageBot:
         if user_id != OWNER_ID:
             await update.message.reply_text("❌ You are not authorized to use this command.")
             return
-        
+
         stats = self.db.get_stats()
         stats_message = (
             f"📊 **Bot Statistics:**\n\n"
