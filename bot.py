@@ -1,5 +1,4 @@
 import logging
-import os
 import hashlib
 from typing import Dict
 
@@ -9,16 +8,13 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from telegram.constants import ParseMode
-from dotenv import load_dotenv
 
 from db import DatabaseHandler  # Make sure you have db.py with DatabaseHandler implemented
 
-# Load environment variables
-load_dotenv()
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-BOT_USERNAME = os.getenv("BOT_USERNAME")
-OWNER_ID = 1868394048  # 👈 Replace this with your actual Telegram user ID
+# --- Bot credentials (hardcoded) ---
+BOT_TOKEN = "8028553539:AAEYk16jeW2QD0NZqTBJEN9Jjle-g72NpwM"
+BOT_USERNAME = "anonymonbot"   # 👈 Replace this with your bot's username
+OWNER_ID = 1868394048            # 👈 Replace with your Telegram ID
 
 # Configure logging
 logging.basicConfig(
@@ -58,7 +54,7 @@ class AnonymousMessageBot:
             last_name=user.last_name
         )
 
-        # Handle if user clicked a referral link
+        # Handle referral link
         if context.args:
             receiver_id = self.extract_user_id_from_start(context.args[0])
             if receiver_id and receiver_id != user_id:
@@ -84,9 +80,8 @@ class AnonymousMessageBot:
                 )
                 return
 
-        # Default user start - show invite link
+        # Default welcome
         invite_link = self.generate_stable_user_link(user_id)
-
         welcome_message = (
             f"🎭 Welcome to Anonymous Message Bot!\n\n"
             f"👤 Your unique link:\n"
@@ -97,7 +92,6 @@ class AnonymousMessageBot:
             f"3. You'll receive them here\n\n"
             f"🔒 All messages are anonymous!"
         )
-
         await update.message.reply_text(welcome_message, parse_mode=ParseMode.MARKDOWN)
 
     async def newlink_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,7 +202,7 @@ class AnonymousMessageBot:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         app.add_handler(MessageHandler(~filters.TEXT & ~filters.COMMAND, self.handle_non_text))
 
-        # Unknown command handler (must be last)
+        # Unknown command handler
         app.add_handler(MessageHandler(filters.COMMAND, self.unknown_command))
 
         app.add_error_handler(self.error_handler)
@@ -219,7 +213,7 @@ class AnonymousMessageBot:
 
 def main():
     if not BOT_TOKEN or not BOT_USERNAME:
-        print("❌ BOT_TOKEN or BOT_USERNAME not set in environment.")
+        print("❌ BOT_TOKEN or BOT_USERNAME not set.")
         return
 
     bot = AnonymousMessageBot(BOT_TOKEN, BOT_USERNAME)
