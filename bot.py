@@ -7,7 +7,7 @@ from flask import Flask  # <-- ADDED for Render
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from dotenv import load_dotenv
-from db import init_db, add_user, add_message, get_user_stats, get_all_users, user_exists
+from database import init_db, add_user, add_message, get_user_stats, get_all_users, user_exists
 
 # Configure logging
 logging.basicConfig(
