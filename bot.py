@@ -12,7 +12,7 @@ from db import (
     get_message_history, block_user, unblock_user, is_blocked,
     is_user_blocked_by_admin, block_user_by_admin, unblock_user_by_admin,
     get_admin_analytics, get_user_settings, update_user_settings,
-    get_rate_limit_count, report_message
+    get_rate_limit_count, report_message, get_connection
 )
 
 # Configure logging
@@ -365,11 +365,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 add_message(user.id, target_user_id, message_text, 'text')
                 logger.info(f"Anonymous message sent from {user.id} to {target_user_id}")
                 
-                # Create action buttons for the recipient
+                # Get the message ID that was just created
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute('SELECT id FROM messages ORDER BY id DESC LIMIT 1')
+                result = cursor.fetchone()
+                message_id = result[0] if result else 0
+                conn.close()
+                
+                # Create action buttons for the recipient with message_id
                 keyboard = [
-                    [InlineKeyboardButton("💬 Reply", callback_data=f"reply_{user.id}"),
+                    [InlineKeyboardButton("💬 Reply", callback_data=f"reply_{user.id}_{message_id}"),
                      InlineKeyboardButton("🚫 Block", callback_data=f"block_{user.id}")],
-                    [InlineKeyboardButton("⭐ Rate Message", callback_data=f"rate_{user.id}")]
+                    [InlineKeyboardButton("⭐ Rate Message", callback_data=f"rate_{user.id}_{message_id}")]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
@@ -417,10 +425,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 add_message(user.id, reply_to_user_id, message_text, 'text')
                 
+                # Add reply button so conversation can continue
+                keyboard = [
+                    [InlineKeyboardButton("💬 Reply Back", callback_data=f"reply_{user.id}_0")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 await context.bot.send_message(
                     chat_id=reply_to_user_id,
                     text=f"💭 **Anonymous Reply:**\n\n{message_text}\n\n"
                          f"💡 _You're chatting anonymously. They don't know who you are._",
+                    reply_markup=reply_markup,
                     parse_mode=ParseMode.MARKDOWN
                 )
                 
@@ -490,7 +505,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Forward photo
                 try:
                     keyboard = [
-                        [InlineKeyboardButton("💬 Reply", callback_data=f"reply_{user.id}"),
+                        [InlineKeyboardButton("💬 Reply", callback_data=f"reply_{user.id}_0"),
                          InlineKeyboardButton("🚫 Block", callback_data=f"block_{user.id}")]
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -529,7 +544,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = query.from_user
         
         if data.startswith("reply_"):
-            anonymous_user_id = int(data.replace("reply_", ""))
+            # Extract user_id and message_id from callback data
+            parts = data.replace("reply_", "").split("_")
+            anonymous_user_id = int(parts[0])
             context.user_data['replying_to'] = anonymous_user_id
             
             await query.edit_message_text(
@@ -549,15 +566,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"This user can no longer send you messages.",
                 parse_mode=ParseMode.MARKDOWN
             )
+            logger.info(f"User {user.id} blocked {anonymous_user_id}")
         
         elif data.startswith("rate_"):
-            # Show rating options
-            anonymous_user_id = int(data.replace("rate_", ""))
+            # Extract user_id and message_id
+            parts = data.replace("rate_", "").split("_")
+            anonymous_user_id = int(parts[0])
+            message_id = int(parts[1]) if len(parts) > 1 else 0
+            
             keyboard = [
-                [InlineKeyboardButton("⭐", callback_data=f"rating_1_{anonymous_user_id}"),
-                 InlineKeyboardButton("⭐⭐", callback_data=f"rating_2_{anonymous_user_id}"),
-                 InlineKeyboardButton("⭐⭐⭐", callback_data=f"rating_3_{anonymous_user_id}")],
-                [InlineKeyboardButton("🚨 Report", callback_data=f"report_{anonymous_user_id}")]
+                [InlineKeyboardButton("⭐", callback_data=f"rating_1_{anonymous_user_id}_{message_id}"),
+                 InlineKeyboardButton("⭐⭐", callback_data=f"rating_2_{anonymous_user_id}_{message_id}"),
+                 InlineKeyboardButton("⭐⭐⭐", callback_data=f"rating_3_{anonymous_user_id}_{message_id}")],
+                [InlineKeyboardButton("🚨 Report", callback_data=f"report_{anonymous_user_id}_{message_id}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -566,6 +587,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("rating_"):
             parts = data.split("_")
             rating = int(parts[1])
+            message_id = int(parts[3]) if len(parts) > 3 else 0
+            
+            # Save rating to database
+            if message_id > 0:
+                try:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute('UPDATE messages SET rating = ? WHERE id = ?', (rating, message_id))
+                    conn.commit()
+                    conn.close()
+                    logger.info(f"Message {message_id} rated {rating} stars")
+                except Exception as e:
+                    logger.error(f"Error saving rating: {e}")
+            
             await query.answer(f"Rated {rating} stars! ⭐")
             await query.edit_message_text(
                 f"{query.message.text}\n\n"
@@ -574,6 +609,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif data.startswith("report_"):
+            parts = data.replace("report_", "").split("_")
+            reported_user_id = int(parts[0])
+            message_id = int(parts[1]) if len(parts) > 1 else 0
+            
+            # Save report to database
+            if message_id > 0:
+                try:
+                    report_message(user.id, message_id, reported_user_id, "User reported via button")
+                    logger.info(f"Message {message_id} reported by {user.id}")
+                except Exception as e:
+                    logger.error(f"Error saving report: {e}")
+            
             await query.answer("Message reported to admin")
             await query.edit_message_text(
                 f"{query.message.text}\n\n"
@@ -583,16 +630,82 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         elif data == "view_profile":
-            await profile_command(query, context)
+            # Create a fake update object for compatibility
+            profile = get_user_profile(user.id)
+            if not profile:
+                await query.answer("Profile not found")
+                return
+            
+            encoded_id = encode_user_id(user.id)
+            anonymous_link = f"https://t.me/{BOT_USERNAME}?start={encoded_id}"
+            
+            profile_text = (
+                f"👤 **Your Profile**\n\n"
+                f"**Name:** {profile['first_name']}\n"
+                f"**Username:** @{profile['username'] or 'Not set'}\n\n"
+                f"📊 **Statistics:**\n"
+                f"• Messages sent: {profile['messages_sent']}\n"
+                f"• Messages received: {profile['messages_received']}\n\n"
+                f"🔗 **Your Link:**\n"
+                f"`{anonymous_link}`"
+            )
+            
+            await query.edit_message_text(profile_text, parse_mode=ParseMode.MARKDOWN)
         
         elif data == "view_history":
-            await history_command(query, context)
+            messages = get_message_history(user.id, limit=10)
+            
+            if not messages:
+                await query.answer("No messages yet")
+                return
+            
+            history_text = "📜 **Recent Messages** (Last 10)\n\n"
+            for msg in messages:
+                timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%b %d, %H:%M')
+                direction = "📤 Sent" if msg['direction'] == 'sent' else "📥 Received"
+                content_preview = msg['content'][:50] + "..." if len(msg['content']) > 50 else msg['content']
+                history_text += f"{direction} - {timestamp}\n_{content_preview}_\n\n"
+            
+            await query.edit_message_text(history_text, parse_mode=ParseMode.MARKDOWN)
         
         elif data == "show_help":
-            await help_command(query, context)
+            help_text = (
+                "❓ **How to Use Anonymous Message Bot**\n\n"
+                "**📥 Receiving Messages:**\n"
+                "1. Share your anonymous link\n"
+                "2. Receive anonymous messages\n\n"
+                "**📤 Sending Messages:**\n"
+                "1. Click someone's link\n"
+                "2. Type your message\n\n"
+                "Use /start to get your link!"
+            )
+            await query.edit_message_text(help_text, parse_mode=ParseMode.MARKDOWN)
         
         elif data == "show_settings":
-            await settings_command(query, context)
+            settings = get_user_settings(user.id)
+            
+            keyboard = [
+                [InlineKeyboardButton(
+                    f"🔔 Notifications: {'ON' if settings['notifications_enabled'] else 'OFF'}",
+                    callback_data="toggle_notifications"
+                )],
+                [InlineKeyboardButton(
+                    f"📷 Allow Media: {'ON' if settings['allow_media'] else 'OFF'}",
+                    callback_data="toggle_media"
+                )],
+                [InlineKeyboardButton(
+                    f"👁️ Read Receipts: {'ON' if settings['show_read_receipts'] else 'OFF'}",
+                    callback_data="toggle_read_receipts"
+                )],
+                [InlineKeyboardButton("🔙 Back", callback_data="back_to_start")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                "⚙️ **Settings**\n\nCustomize your experience:",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
         
         elif data.startswith("toggle_"):
             setting = data.replace("toggle_", "")
@@ -611,11 +724,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_user_settings(user.id, show_read_receipts=new_value)
                 await query.answer(f"Read receipts {'enabled' if new_value else 'disabled'}")
             
-            # Refresh settings display
-            await settings_command(query, context)
+            # Refresh settings display - call show_settings callback
+            context.user_data['temp_callback'] = 'show_settings'
+            await handle_callback(update, context)
         
         elif data == "back_to_start":
-            await start(query, context)
+            encoded_id = encode_user_id(user.id)
+            anonymous_link = f"https://t.me/{BOT_USERNAME}?start={encoded_id}"
+            
+            keyboard = [
+                [InlineKeyboardButton("📤 Share Your Link", url=f"https://t.me/share/url?url={anonymous_link}&text=Send me an anonymous message! 💬")],
+                [InlineKeyboardButton("📊 View Profile", callback_data="view_profile"),
+                 InlineKeyboardButton("❓ Help", callback_data="show_help")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            welcome_msg = (
+                f"👋 **Welcome back!**\n\n"
+                f"🔗 **Your Anonymous Link:**\n"
+                f"`{anonymous_link}`\n\n"
+                f"Share this link to receive anonymous messages!"
+            )
+            
+            await query.edit_message_text(welcome_msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
     
     except Exception as e:
         logger.error(f"Error handling callback: {e}")
