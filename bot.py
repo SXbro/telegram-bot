@@ -915,7 +915,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ An error occurred while fetching stats.")
 
 async def main():
-    """Main async function to run the bot"""
+    """Main async function — webhook on Render, polling locally"""
     # Initialize database
     print("🔧 Initializing database...")
     init_db()
@@ -954,42 +954,41 @@ async def main():
     print(f"📝 Logging to: {LOG_FILE}")
     print("=" * 50)
 
-    # --- Graceful shutdown via SIGTERM (Render sends this on redeploy) ---
-    stop_event = asyncio.Event()
+    render_url = os.getenv("RENDER_EXTERNAL_URL")  # Automatically set by Render
 
-    def _signal_handler():
-        print("\n🛑 Shutdown signal received, stopping bot cleanly...")
-        stop_event.set()
+    if render_url:
+        # ── WEBHOOK MODE (Render) ────────────────────────────────────────────
+        # Webhook eliminates the 409 Conflict error completely because
+        # Telegram pushes updates to us — no competing getUpdates calls.
+        port = int(os.getenv("PORT", 10000))
+        webhook_url = f"{render_url}/webhook/{BOT_TOKEN}"
 
-    loop = asyncio.get_event_loop()
-    loop.add_signal_handler(signal.SIGTERM, _signal_handler)
-    loop.add_signal_handler(signal.SIGINT, _signal_handler)
+        print(f"🌐 Webhook mode active")
+        print(f"🔌 Listening on port: {port}")
+        print("✅ Bot is running!")
+        print("=" * 50)
 
-    # Wait on startup so any previous Render instance fully releases
-    # the Telegram getUpdates connection before we start polling.
-    # This eliminates the 409 Conflict error on rolling deploys.
-    print("⏳ Waiting 5s for previous instance to release polling connection...")
-    await asyncio.sleep(5)
+        # Delete any leftover polling webhook before registering ours
+        await application.bot.delete_webhook(drop_pending_updates=True)
 
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling(
-        drop_pending_updates=True,
-        allowed_updates=["message", "callback_query"],
-    )
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=f"/webhook/{BOT_TOKEN}",
+            webhook_url=webhook_url,
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+    else:
+        # ── POLLING MODE (local development) ────────────────────────────────
+        print("💻 Polling mode (local development)")
+        print("✅ Bot is running! Press Ctrl+C to stop")
+        print("=" * 50)
 
-    print("✅ Bot is running!")
-    print("=" * 50)
-
-    # Block here until a stop signal is received
-    await stop_event.wait()
-
-    # Graceful shutdown sequence
-    print("🛑 Shutting down gracefully...")
-    await application.updater.stop()
-    await application.stop()
-    await application.shutdown()
-    print("✅ Bot shut down cleanly.")
+        await application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
 
 
 if __name__ == "__main__":
