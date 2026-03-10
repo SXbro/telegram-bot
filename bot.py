@@ -913,57 +913,70 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in stats command: {e}")
         await update.message.reply_text("❌ An error occurred while fetching stats.")
 
-def main():
-    """Main function to run the bot"""
+async def main():
+    """Main async function to run the bot"""
+    # Initialize database
+    print("🔧 Initializing database...")
+    init_db()
+    migrate_existing_data()
+
+    # Create application
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    # Add command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("profile", profile_command))
+    application.add_handler(CommandHandler("history", history_command))
+    application.add_handler(CommandHandler("settings", settings_command))
+
+    # Admin commands
+    application.add_handler(CommandHandler("admin", admin_dashboard))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("ban", ban_user))
+    application.add_handler(CommandHandler("unban", unban_user))
+    application.add_handler(CommandHandler("stats", stats))
+
+    # Message handlers
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # Callback handler
+    application.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Start the bot
+    print("=" * 50)
+    print("🤖 Anonymous Message Bot Starting...")
+    print("=" * 50)
+    print(f"📱 Bot username: @{BOT_USERNAME}")
+    print(f"👤 Admin ID: {ADMIN_ID}")
+    print(f"✅ All features enabled!")
+    print(f"📝 Logging to: {LOG_FILE}")
+    print("=" * 50)
+    print("✅ Bot is running! Press Ctrl+C to stop")
+    print("=" * 50)
+
+    # Use initialize/start/updater pattern for better async compatibility
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(drop_pending_updates=True)
+
+    # Keep running until interrupted
     try:
-        # Initialize database
-        print("🔧 Initializing database...")
-        init_db()
-        migrate_existing_data()
-        
-        # Create application
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Add command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("profile", profile_command))
-        application.add_handler(CommandHandler("history", history_command))
-        application.add_handler(CommandHandler("settings", settings_command))
-        
-        # Admin commands
-        application.add_handler(CommandHandler("admin", admin_dashboard))
-        application.add_handler(CommandHandler("broadcast", broadcast))
-        application.add_handler(CommandHandler("ban", ban_user))
-        application.add_handler(CommandHandler("unban", unban_user))
-        application.add_handler(CommandHandler("stats", stats))
-        
-        # Message handlers
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-        
-        # Callback handler
-        application.add_handler(CallbackQueryHandler(handle_callback))
-        
-        # Start the bot
-        print("=" * 50)
-        print("🤖 Anonymous Message Bot Starting...")
-        print("=" * 50)
-        print(f"📱 Bot username: @{BOT_USERNAME}")
-        print(f"👤 Admin ID: {ADMIN_ID}")
-        print(f"✅ All features enabled!")
-        print(f"📝 Logging to: {LOG_FILE}")
-        print("=" * 50)
-        print("✅ Bot is running! Press Ctrl+C to stop")
-        print("=" * 50)
-        
-        application.run_polling(drop_pending_updates=True)
-        
+        await asyncio.Event().wait()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        print("\n🛑 Shutting down bot...")
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped by user")
     except Exception as e:
         logger.error(f"Critical error: {e}")
         print(f"❌ Critical error: {e}")
-
-if __name__ == "__main__":
-    main()
