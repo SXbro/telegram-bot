@@ -2,6 +2,7 @@ import os
 import base64
 import logging
 import asyncio
+import signal
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
@@ -944,7 +945,6 @@ async def main():
     # Callback handler
     application.add_handler(CallbackQueryHandler(handle_callback))
 
-    # Start the bot
     print("=" * 50)
     print("🤖 Anonymous Message Bot Starting...")
     print("=" * 50)
@@ -953,24 +953,44 @@ async def main():
     print(f"✅ All features enabled!")
     print(f"📝 Logging to: {LOG_FILE}")
     print("=" * 50)
-    print("✅ Bot is running! Press Ctrl+C to stop")
-    print("=" * 50)
 
-    # Use initialize/start/updater pattern for better async compatibility
+    # --- Graceful shutdown via SIGTERM (Render sends this on redeploy) ---
+    stop_event = asyncio.Event()
+
+    def _signal_handler():
+        print("\n🛑 Shutdown signal received, stopping bot cleanly...")
+        stop_event.set()
+
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(signal.SIGTERM, _signal_handler)
+    loop.add_signal_handler(signal.SIGINT, _signal_handler)
+
+    # Wait on startup so any previous Render instance fully releases
+    # the Telegram getUpdates connection before we start polling.
+    # This eliminates the 409 Conflict error on rolling deploys.
+    print("⏳ Waiting 5s for previous instance to release polling connection...")
+    await asyncio.sleep(5)
+
     await application.initialize()
     await application.start()
-    await application.updater.start_polling(drop_pending_updates=True)
+    await application.updater.start_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query"],
+    )
 
-    # Keep running until interrupted
-    try:
-        await asyncio.Event().wait()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        print("\n🛑 Shutting down bot...")
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+    print("✅ Bot is running!")
+    print("=" * 50)
+
+    # Block here until a stop signal is received
+    await stop_event.wait()
+
+    # Graceful shutdown sequence
+    print("🛑 Shutting down gracefully...")
+    await application.updater.stop()
+    await application.stop()
+    await application.shutdown()
+    print("✅ Bot shut down cleanly.")
+
 
 if __name__ == "__main__":
     try:
